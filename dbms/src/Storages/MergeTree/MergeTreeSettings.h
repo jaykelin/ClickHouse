@@ -116,6 +116,9 @@ struct MergeTreeSettings
     /// Minimal amount of non-PK columns to activate Vertical merge algorithm
     size_t vertical_merge_algorithm_min_columns_to_activate = 11;
 
+    /// Maximum number of days for recent data save as daily partition
+    size_t max_days_to_save_daily_partition = 30;
+
 
     void loadFromConfig(const String & config_elem, Poco::Util::AbstractConfiguration & config)
     {
@@ -163,6 +166,7 @@ struct MergeTreeSettings
         SET(enable_vertical_merge_algorithm, getUInt64);
         SET(vertical_merge_algorithm_min_rows_to_activate, getUInt64);
         SET(vertical_merge_algorithm_min_columns_to_activate, getUInt64);
+        SET(max_days_to_save_daily_partition, getUInt64);
 
     #undef SET
     }

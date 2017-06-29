@@ -318,6 +318,10 @@ bool StorageMergeTree::merge(
 
         auto can_merge = [this] (const MergeTreeData::DataPartPtr & left, const MergeTreeData::DataPartPtr & right)
         {
+            const auto & date_lut = DateLUT::instance();
+            unsigned left_left_date =  date_lut.toNumYYYYMMDD(left->left_date);
+            unsigned right_left_date = date_lut.toNumYYYYMMDD(right->left_date);
+            LOG_INFO(log, "begin date:"<<left_left_date << ",end date:" << right_left_date);
             return !currently_merging.count(left) && !currently_merging.count(right);
         };
 
