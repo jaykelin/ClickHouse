@@ -1697,30 +1697,54 @@ size_t MergeTreeData::getPartitionSize(const std::string & partition_name) const
     return size;
 }
 
-static std::pair<String, DayNum_t> getMonthNameAndDayNum(const Field & partition)
+static std::pair<String, DayNum_t> getMonthNameAndDayNum(const Field & partition, const MergeTreeSettings & settings)
 {
     String month_name = partition.getType() == Field::Types::UInt64
         ? toString(partition.get<UInt64>())
         : partition.safeGet<String>();
 
-    if (month_name.size() != 6 || !std::all_of(month_name.begin(), month_name.end(), isdigit))
-        throw Exception("Invalid partition format: " + month_name + ". Partition should consist of 6 digits: YYYYMM",
-            ErrorCodes::INVALID_PARTITION_NAME);
+    const auto & date_lut = DateLUT::instance();
+    DayNum_t  date;
 
-    DayNum_t date = DateLUT::instance().YYYYMMDDToDayNum(parse<UInt32>(month_name + "01"));
+    // is daily store partition ?
+    if (month_name.size() == 8){
+        if (!std::all_of(month_name.begin(), month_name.end(), isdigit)){
+            throw Exception("Invalid partition format: "+month_name+". Partition should consist of 6/8 digits: YYYYMMDD",ErrorCodes::INVALID_PARTITION_NAME);
+        }
+        // is legal date format ?
+        date = date_lut.YYYYMMDDToDayNum(parse<UInt32>(month_name.substr(0,6)+"01"));
+        unsigned year = parse<UInt32>(month_name.substr(0,4));
+        unsigned month = parse<UInt32>(month_name.substr(4,2));
+        unsigned day = parse<UInt32>(month_name.substr(6,2));
+        DayNum_t partDay = date_lut.YYYYMMDDToDayNum(parse<UInt32>(month_name));
+        if (year != date_lut.toYear(partDay) || month != date_lut.toMonth(partDay) || day != date_lut.toDayOfMonth(partDay)){
+            throw Exception("Invalid partition format:"+month_name+", doesn't look like YYYYMMDD", ErrorCodes::INVALID_PARTITION_NAME);
+        }
+        // is legal daily store partition
+        time_t now = time(nullptr);
+        double_t between_days = difftime(now, date_lut.YYYYMMDDToDate(parse<UInt32>(month_name)))/(60*60*24);
+        if (between_days <0 || settings.max_days_to_store_daily_partition < (UInt32) between_days){
+            throw Exception("Invalid partition format: "+month_name+", Exceeded max days of daily partition", ErrorCodes::INVALID_PARTITION_NAME);
+        }
+    }else if (month_name.size() != 6 || !std::all_of(month_name.begin(), month_name.end(), isdigit)){
+        throw Exception("Invalid partition format: " + month_name + ". Partition should consist of 6/8 digits: YYYYMMDD",
+                        ErrorCodes::INVALID_PARTITION_NAME);
+    }else{
+        date = DateLUT::instance().YYYYMMDDToDayNum(parse<UInt32>(month_name + "01"));
 
-    /// Can't just compare date with 0, because 0 is a valid DayNum too.
-    if (month_name != toString(DateLUT::instance().toNumYYYYMMDD(date) / 100))
-        throw Exception("Invalid partition format: " + month_name + " doesn't look like month.",
-            ErrorCodes::INVALID_PARTITION_NAME);
+        /// Can't just compare date with 0, because 0 is a valid DayNum too.
+        if (month_name != toString(DateLUT::instance().toNumYYYYMMDD(date) / 100))
+            throw Exception("Invalid partition format: " + month_name + " doesn't look like month.",
+                            ErrorCodes::INVALID_PARTITION_NAME);
+    }
 
     return std::make_pair(month_name, date);
 }
 
 
-String MergeTreeData::getMonthName(const Field & partition)
+String MergeTreeData::getMonthName(const Field & partition, const MergeTreeSettings & settings)
 {
-    return getMonthNameAndDayNum(partition).first;
+    return getMonthNameAndDayNum(partition, settings).first;
 }
 
 String MergeTreeData::getMonthName(DayNum_t month)
@@ -1728,17 +1752,18 @@ String MergeTreeData::getMonthName(DayNum_t month)
     return toString(DateLUT::instance().toNumYYYYMMDD(month) / 100);
 }
 
-DayNum_t MergeTreeData::getMonthDayNum(const Field & partition)
+DayNum_t MergeTreeData::getMonthDayNum(const Field & partition, const MergeTreeSettings & settings)
 {
-    return getMonthNameAndDayNum(partition).second;
+    return getMonthNameAndDayNum(partition, settings).second;
 }
 
 DayNum_t MergeTreeData::getMonthFromName(const String & month_name)
 {
-    DayNum_t date = DateLUT::instance().YYYYMMDDToDayNum(parse<UInt32>(month_name + "01"));
+    const String val = month_name.size()==6?month_name:month_name.substr(0,6);
+    DayNum_t date = DateLUT::instance().YYYYMMDDToDayNum(parse<UInt32>(val+"01"));
 
     /// Can't just compare date with 0, because 0 is a valid DayNum too.
-    if (month_name != toString(DateLUT::instance().toNumYYYYMMDD(date) / 100))
+    if (val != toString(DateLUT::instance().toNumYYYYMMDD(date) / 100))
         throw Exception("Invalid partition format: " + month_name + " doesn't look like month.",
             ErrorCodes::INVALID_PARTITION_NAME);
 

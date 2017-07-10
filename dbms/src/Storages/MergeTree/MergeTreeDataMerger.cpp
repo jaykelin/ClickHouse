@@ -154,14 +154,36 @@ bool MergeTreeDataMerger::selectPartsToMerge(
                 partitions.emplace_back();
             prev_month = month;
         }
+//        bool store_daily_parition = false;
+//        if (prev_part){
+//            const auto & date_lut = DateLUT::instance();
+//            unsigned left_left_date =  date_lut.toNumYYYYMMDD((*prev_part)->left_date);
+//            unsigned left_right_date = date_lut.toNumYYYYMMDD((*prev_part)->right_date);
+//            unsigned right_left_date = date_lut.toNumYYYYMMDD(part->left_date);
+//            unsigned right_right_date = date_lut.toNumYYYYMMDD(part->right_date);
+//
+//            double_t days_between_right_datatime_to_now = difftime(time(0), date_lut.YYYYMMDDToDate(right_left_date))/(60*60*24);
+//            double_t days_between_left_datatime_to_now = difftime(time(0), date_lut.YYYYMMDDToDate(left_left_date))/(60*60*24);
+//            size_t max_days_to_store_daily_partition = data.settings.max_days_to_store_daily_partition;
+//
+//            if (max_days_to_store_daily_partition >= (UInt32) days_between_left_datatime_to_now || max_days_to_store_daily_partition >= days_between_right_datatime_to_now){
+//                if (left_left_date != right_left_date){
+//                    LOG_DEBUG(log, "Request Merge right_dataPart["<<right_left_date << "," << right_right_date << "] to left_dataPart[" << left_left_date << "," << left_right_date <<"],daily_partition:true");
+////                    return false;
+//                    store_daily_parition = true;
+//                }
+//            }
+//        }
 
-        IMergeSelector::Part part_info;
-        part_info.size = part->size_in_bytes;
-        part_info.age = current_time - part->modification_time;
-        part_info.level = part->level;
-        part_info.data = &part;
+//        if (!store_daily_parition){
+            IMergeSelector::Part part_info;
+            part_info.size = part->size_in_bytes;
+            part_info.age = current_time - part->modification_time;
+            part_info.level = part->level;
+            part_info.data = &part;
 
-        partitions.back().emplace_back(part_info);
+            partitions.back().emplace_back(part_info);
+//        }
 
         /// Check for consistenty of data parts. If assertion is failed, it requires immediate investigation.
         if (prev_part && part->month == (*prev_part)->month && part->left < (*prev_part)->right)
