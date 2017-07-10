@@ -11,10 +11,11 @@ namespace DB
 
 void ReplicatedMergeTreeLogEntryData::writeText(WriteBuffer & out) const
 {
-    out << "format version: 4\n"
+    out << "format version: 5\n"
         << "create_time: " << LocalDateTime(create_time ? create_time : time(0)) << "\n"
         << "source replica: " << source_replica << '\n'
-        << "block_id: " << escape << block_id << '\n';
+        << "block_id: " << escape << block_id << '\n'
+        << "partition: " << partition << '\n';
 
     switch (type)
     {
@@ -64,7 +65,7 @@ void ReplicatedMergeTreeLogEntryData::readText(ReadBuffer & in)
 
     in >> "format version: " >> format_version >> "\n";
 
-    if (format_version < 1 || format_version > 4)
+    if (format_version < 1 || format_version > 5)
         throw Exception("Unknown ReplicatedMergeTreeLogEntry format version: " + DB::toString(format_version), ErrorCodes::UNKNOWN_FORMAT_VERSION);
 
     if (format_version >= 2)
@@ -79,6 +80,10 @@ void ReplicatedMergeTreeLogEntryData::readText(ReadBuffer & in)
     if (format_version >= 3)
     {
         in >> "block_id: " >> escape >> block_id >> "\n";
+    }
+
+    if (format_version >= 5){
+        in >> "partition: " >> partition >> "\n";
     }
 
     in >> type_str >> "\n";

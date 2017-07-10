@@ -93,6 +93,9 @@ struct ReplicatedMergeTreeLogEntryData
 
     /// The quorum value (for GET_PART) is a non-zero value when the quorum write is enabled.
     size_t quorum = 0;
+
+    /// support drop daily store partition
+    String partition;
 };
 
 

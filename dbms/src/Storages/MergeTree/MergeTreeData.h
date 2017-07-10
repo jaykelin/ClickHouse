@@ -457,9 +457,9 @@ public:
     }
 
     /// For ATTACH/DETACH/DROP/RESHARD PARTITION.
-    static String getMonthName(const Field & partition);
+    static String getMonthName(const Field & partition, const MergeTreeSettings & settings);
     static String getMonthName(DayNum_t month);
-    static DayNum_t getMonthDayNum(const Field & partition);
+    static DayNum_t getMonthDayNum(const Field & partition, const MergeTreeSettings & settings);
     static DayNum_t getMonthFromName(const String & month_name);
     /// Get month from the part name or a sufficient prefix.
     static DayNum_t getMonthFromPartPrefix(const String & part_prefix);

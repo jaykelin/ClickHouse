@@ -1485,31 +1485,99 @@ void StorageReplicatedMergeTree::executeDropRange(const StorageReplicatedMergeTr
     /// And, if you do not, the parts will come to life after the server is restarted.
     /// Therefore, we use getAllDataParts.
     auto parts = data.getAllDataParts();
-    for (const auto & part : parts)
-    {
-        if (!ActiveDataPartSet::contains(entry.new_part_name, part->name))
-            continue;
+    const String month_name = entry.partition;
 
-        LOG_DEBUG(log, "Removing part " << part->name);
-        ++removed_parts;
+    auto zookeeper = getZooKeeper();
+//    zkutil::Ops dropBlockIDSops;
 
-        /// If you do not need to delete a part, it's more reliable to move the directory before making changes to ZooKeeper.
-        if (entry.detach)
-            data.renameAndDetachPart(part);
+    if (month_name.size() == 8){
+        // drop partition for YYYYMMDD
+        MergeTreeData::DataParts dailyParts;
+        dailyParts.clear();
+        const auto & date_lut = DateLUT::instance();
+        unsigned to_drop_part = parse<UInt32>(month_name);
+        for (const auto & part : parts) {
+            // TODO drop zk block_ids
 
-        zkutil::Ops ops;
-        removePartFromZooKeeper(part->name, ops);
-        auto code = getZooKeeper()->tryMulti(ops);
+//            if (!ActiveDataPartSet::contains(entry.new_part_name, part->name))
+//                continue;
+//            if (part->month != month_name)
+//                continue;
+            if (date_lut.toNumYYYYMMDD(part->left_date) == date_lut.toNumYYYYMMDD(part->right_date)){
+                if (to_drop_part == date_lut.toNumYYYYMMDD(part->left_date)){
+                    dailyParts.insert(part);
+                }
+            }else{
+                if (to_drop_part == date_lut.toNumYYYYMMDD(part->left_date) || to_drop_part == date_lut.toNumYYYYMMDD(part->right_date)){
+                    dailyParts.clear();
+                    LOG_ERROR(log, "Logical error: legal partition:"+month_name+",but found part:"+part->name);
+                }
+            }
+        }
+        for (const auto & part : dailyParts)
+        {
 
-        /// If the part is already removed (for example, because it was never added to ZK due to crash,
-        /// see ReplicatedMergeTreeBlockOutputStream), then Ok.
-        if (code != ZOK && code != ZNONODE)
-            throw zkutil::KeeperException(code);
+            LOG_DEBUG(log, "Removing part " << part->name);
+            ++removed_parts;
 
-        /// If the part needs to be removed, it is more reliable to delete the directory after the changes in ZooKeeper.
-        if (!entry.detach)
-            data.replaceParts({part}, {}, true);
+            /// If you do not need to delete a part, it's more reliable to move the directory before making changes to ZooKeeper.
+            if (entry.detach)
+                data.renameAndDetachPart(part);
+
+            zkutil::Ops ops;
+            removePartFromZooKeeper(part, ops);
+            auto code = zookeeper->tryMulti(ops);
+
+            /// If the part is already removed (for example, because it was never added to ZK due to crash,
+            /// see ReplicatedMergeTreeBlockOutputStream), then Ok.
+            if (code != ZOK && code != ZNONODE)
+                throw zkutil::KeeperException(code);
+
+            /// If the part needs to be removed, it is more reliable to delete the directory after the changes in ZooKeeper.
+            if (!entry.detach)
+                data.replaceParts({part}, {}, true);
+        }
+    }else{
+        for (const auto & part : parts)
+        {
+            if (!ActiveDataPartSet::contains(entry.new_part_name, part->name))
+                continue;
+
+            LOG_DEBUG(log, "Removing part " << part->name);
+            ++removed_parts;
+
+            /// If you do not need to delete a part, it's more reliable to move the directory before making changes to ZooKeeper.
+            if (entry.detach)
+                data.renameAndDetachPart(part);
+
+            zkutil::Ops ops;
+            removePartFromZooKeeper(part, ops);
+            auto code = zookeeper->tryMulti(ops);
+
+            /// If the part is already removed (for example, because it was never added to ZK due to crash,
+            /// see ReplicatedMergeTreeBlockOutputStream), then Ok.
+            if (code != ZOK && code != ZNONODE)
+                throw zkutil::KeeperException(code);
+
+            /// If the part needs to be removed, it is more reliable to delete the directory after the changes in ZooKeeper.
+            if (!entry.detach)
+                data.replaceParts({part}, {}, true);
+        }
+
     }
+
+//    auto code = zookeeper->tryMulti(dropBlockIDSops);
+//
+//    if (code == ZOK)
+//    {
+//        LOG_DEBUG(log, "Drop block_ids for partition " << month_name << " as failed.");
+//    }
+//    else if (code == ZBADVERSION || code == ZNONODE || code == ZNODEEXISTS)
+//    {
+//        LOG_DEBUG(log, "State was changed or isn't expected when trying to Drop block_ids for parttition "
+//                << month_name << " as failed. Code: " << zerror(code));
+//    }
+
 
     LOG_INFO(log, (entry.detach ? "Detached " : "Removed ") << removed_parts << " parts inside " << entry.new_part_name << ".");
 }
@@ -1679,6 +1747,24 @@ bool StorageReplicatedMergeTree::canMergeParts(
       *
       * TODO I wonder how this is combined with DROP PARTITION and then ATTACH PARTITION.
       */
+
+    const auto & date_lut = DateLUT::instance();
+    unsigned left_left_date =  date_lut.toNumYYYYMMDD(left->left_date);
+    unsigned left_right_date = date_lut.toNumYYYYMMDD(left->right_date);
+    unsigned right_left_date = date_lut.toNumYYYYMMDD(right->left_date);
+    unsigned right_right_date = date_lut.toNumYYYYMMDD(right->right_date);
+
+    time_t now = time(nullptr);
+    double_t days_between_right_datatime_to_now = difftime(now, date_lut.YYYYMMDDToDate(right_left_date))/(60*60*24);
+    double_t days_between_left_datatime_to_now = difftime(now, date_lut.YYYYMMDDToDate(left_left_date))/(60*60*24);
+    size_t max_days_to_store_daily_partition = context.getMergeTreeSettings().max_days_to_store_daily_partition;
+
+    if (max_days_to_store_daily_partition >= (UInt32) days_between_left_datatime_to_now || max_days_to_store_daily_partition >= days_between_right_datatime_to_now){
+        if (left_left_date != right_left_date){
+            LOG_DEBUG(log, "Request Merge right_dataPart["<<right_left_date << "," << right_right_date << "] to left_dataPart[" << left_left_date << "," << left_right_date <<"],daily_partition:true");
+            return false;
+        }
+    }
 
     /// If any of the parts is already going to be merge into a larger one, do not agree to merge it.
     if (queue.partWillBeMergedOrMergesDisabled(left->name)
@@ -1898,6 +1984,38 @@ bool StorageReplicatedMergeTree::createLogEntryToMergeParts(
 void StorageReplicatedMergeTree::removePartFromZooKeeper(const String & part_name, zkutil::Ops & ops)
 {
     String part_path = replica_path + "/parts/" + part_name;
+
+    ops.emplace_back(std::make_unique<zkutil::Op::Remove>(part_path + "/checksums", -1));
+    ops.emplace_back(std::make_unique<zkutil::Op::Remove>(part_path + "/columns", -1));
+    ops.emplace_back(std::make_unique<zkutil::Op::Remove>(part_path, -1));
+}
+
+void StorageReplicatedMergeTree::removePartFromZooKeeper(const MergeTreeData::DataPartPtr &part, zkutil::Ops &ops) {
+    /// TODO how to drop block_id like < String block_id = insert_id.empty() ? "" : insert_id + "__" + toString(block_index); >
+    /// Hash from the data.
+    SipHash hash;
+    part->checksums.summaryDataChecksum(hash);
+    union
+    {
+        char bytes[16];
+        UInt64 words[2];
+    } hash_value;
+    hash.get128(hash_value.bytes);
+
+    const String block_id = toString(hash_value.words[0]) + "_" + toString(hash_value.words[1]);
+
+    if (block_id.empty())
+        throw Exception("Logical error: block_id is empty.", ErrorCodes::LOGICAL_ERROR);
+
+    /// Deleting from `blocks`.
+    if (getZooKeeper()->exists(zookeeper_path + "/blocks/" + block_id))
+    {
+        ops.emplace_back(std::make_unique<zkutil::Op::Remove>(zookeeper_path + "/blocks/" + block_id + "/number", -1));
+        ops.emplace_back(std::make_unique<zkutil::Op::Remove>(zookeeper_path + "/blocks/" + block_id + "/checksum", -1));
+        ops.emplace_back(std::make_unique<zkutil::Op::Remove>(zookeeper_path + "/blocks/" + block_id, -1));
+    }
+
+    String part_path = replica_path + "/parts/" + part->name;
 
     ops.emplace_back(std::make_unique<zkutil::Op::Remove>(part_path + "/checksums", -1));
     ops.emplace_back(std::make_unique<zkutil::Op::Remove>(part_path + "/columns", -1));
@@ -2705,9 +2823,20 @@ static String getFakePartNameForDrop(const String & month_name, UInt64 left, UIn
 {
     /// The date range is all month long.
     const auto & lut = DateLUT::instance();
-    time_t start_time = lut.YYYYMMDDToDate(parse<UInt32>(month_name + "01"));
-    DayNum_t left_date = lut.toDayNum(start_time);
-    DayNum_t right_date = DayNum_t(static_cast<size_t>(left_date) + lut.daysInMonth(start_time) - 1);
+    const String val = month_name.size()==6?month_name+"01":month_name;
+    DayNum_t left_date;
+    DayNum_t right_date;
+    time_t start_time = lut.YYYYMMDDToDate(parse<UInt32>(val));
+    if (month_name.size() == 8){
+        left_date = lut.toDayNum(start_time);
+        right_date = lut.toDayNum(start_time);
+    }else{
+        left_date = lut.toDayNum(start_time);
+        right_date = DayNum_t(static_cast<size_t>(left_date) + lut.daysInMonth(start_time) - 1);
+    }
+//    time_t start_time = lut.YYYYMMDDToDate(parse<UInt32>(month_name + "01"));
+//    DayNum_t left_date = lut.toDayNum(start_time);
+//    DayNum_t right_date = DayNum_t(static_cast<size_t>(left_date) + lut.daysInMonth(start_time) - 1);
 
     /// Level - `right-left+1`: part could not have been formed as a result of such or more mergers.
     /// TODO This is not true for parts after ATTACH.
@@ -2725,24 +2854,73 @@ void StorageReplicatedMergeTree::dropUnreplicatedPartition(const Field & partiti
     auto merge_blocker = unreplicated_merger->cancel();
     auto structure_lock = lockStructure(true);
 
-    const DayNum_t month = MergeTreeData::getMonthDayNum(partition);
+    const DayNum_t month = MergeTreeData::getMonthDayNum(partition, context.getMergeTreeSettings());
 
     size_t removed_parts = 0;
     MergeTreeData::DataParts parts = unreplicated_data->getDataParts();
 
-    for (const auto & part : parts)
-    {
-        if (part->month != month)
-            continue;
+    String month_name = partition.getType() == Field::Types::UInt64
+                        ? toString(partition.get<UInt64>())
+                        : partition.safeGet<String>();
+    if (month_name.size() == 8){
+        // drop partition for YYYYMMDD
+        MergeTreeData::DataParts dailyParts;
+        dailyParts.clear();
+        const auto & date_lut = DateLUT::instance();
+        unsigned to_drop_part = parse<UInt32>(month_name);
+        for (const auto & part : parts) {
+            if (part->month != month)
+                continue;
+            if (date_lut.toNumYYYYMMDD(part->left_date) == date_lut.toNumYYYYMMDD(part->right_date)){
+                if (to_drop_part == date_lut.toNumYYYYMMDD(part->left_date)){
+                    dailyParts.insert(part);
+                }
+            }else{
+                if (to_drop_part == date_lut.toNumYYYYMMDD(part->left_date) || to_drop_part == date_lut.toNumYYYYMMDD(part->right_date)){
+                    dailyParts.clear();
+                    throw Exception("Logical error: legal partition:"+month_name+",but found part:"+part->name, ErrorCodes::LOGICAL_ERROR);
+                }
+            }
+        }
+        for (const auto & part : dailyParts) {
+            LOG_DEBUG(log, "Removing part " << part->name);
+            ++removed_parts;
 
-        LOG_DEBUG(log, "Removing unreplicated part " << part->name);
-        ++removed_parts;
+            if (detach)
+                data.renameAndDetachPart(part, "");
+            else
+                data.replaceParts({part}, {}, false);
+        }
+    }else{
+        // drop partition for YYYYMMDD
+        for (const auto & part : parts)
+        {
+            if (part->month != month)
+                continue;
 
-        if (detach)
-            unreplicated_data->renameAndDetachPart(part, "");
-        else
-            unreplicated_data->replaceParts({part}, {}, false);
+            LOG_DEBUG(log, "Removing part " << part->name);
+            ++removed_parts;
+
+            if (detach)
+                data.renameAndDetachPart(part, "");
+            else
+                data.replaceParts({part}, {}, false);
+        }
     }
+
+//    for (const auto & part : parts)
+//    {
+//        if (part->month != month)
+//            continue;
+//
+//        LOG_DEBUG(log, "Removing unreplicated part " << part->name);
+//        ++removed_parts;
+//
+//        if (detach)
+//            unreplicated_data->renameAndDetachPart(part, "");
+//        else
+//            unreplicated_data->replaceParts({part}, {}, false);
+//    }
 
     LOG_INFO(log, (detach ? "Detached " : "Removed ") << removed_parts << " unreplicated parts inside " << applyVisitor(FieldVisitorToString(), partition) << ".");
 }
@@ -2759,7 +2937,7 @@ void StorageReplicatedMergeTree::dropPartition(
 
     assertNotReadonly();
 
-    String month_name = MergeTreeData::getMonthName(field);
+    String month_name = MergeTreeData::getMonthName(field, context.getMergeTreeSettings());
 
     if (!is_leader_node)
     {
@@ -2841,6 +3019,7 @@ void StorageReplicatedMergeTree::dropPartition(
     entry.source_replica = replica_name;
     entry.new_part_name = fake_part_name;
     entry.detach = detach;
+    entry.partition = month_name;
     String log_znode_path = getZooKeeper()->create(zookeeper_path + "/log/log-", entry.toString(), zkutil::CreateMode::PersistentSequential);
     entry.znode_name = log_znode_path.substr(log_znode_path.find_last_of('/') + 1);
     entry.create_time = time(0);
@@ -2865,7 +3044,7 @@ void StorageReplicatedMergeTree::attachPartition(ASTPtr query, const Field & fie
     if (attach_part)
         partition = field.safeGet<String>();
     else
-        partition = MergeTreeData::getMonthName(field);
+        partition = MergeTreeData::getMonthName(field, context.getMergeTreeSettings());
 
     String source_dir = (unreplicated ? "unreplicated/" : "detached/");
 
@@ -3384,7 +3563,7 @@ void StorageReplicatedMergeTree::getReplicaDelays(time_t & out_absolute_delay, t
 
 void StorageReplicatedMergeTree::fetchPartition(const Field & partition, const String & from_, const Settings & settings)
 {
-    String partition_str = MergeTreeData::getMonthName(partition);
+    String partition_str = MergeTreeData::getMonthName(partition, context.getMergeTreeSettings());
 
     String from = from_;
     if (from.back() == '/')
@@ -3625,8 +3804,8 @@ void StorageReplicatedMergeTree::reshardPartitions(
                 throw Exception{"Shard paths must be distinct", ErrorCodes::DUPLICATE_SHARD_PATHS};
         }
 
-        DayNum_t first_partition_num = !first_partition.isNull() ? MergeTreeData::getMonthDayNum(first_partition) : DayNum_t();
-        DayNum_t last_partition_num = !last_partition.isNull() ? MergeTreeData::getMonthDayNum(last_partition) : DayNum_t();
+        DayNum_t first_partition_num = !first_partition.isNull() ? MergeTreeData::getMonthDayNum(first_partition, context.getMergeTreeSettings()) : DayNum_t();
+        DayNum_t last_partition_num = !last_partition.isNull() ? MergeTreeData::getMonthDayNum(last_partition, context.getMergeTreeSettings()) : DayNum_t();
 
         if (first_partition_num && last_partition_num)
         {

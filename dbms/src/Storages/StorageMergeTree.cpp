@@ -320,8 +320,21 @@ bool StorageMergeTree::merge(
         {
             const auto & date_lut = DateLUT::instance();
             unsigned left_left_date =  date_lut.toNumYYYYMMDD(left->left_date);
+            unsigned left_right_date = date_lut.toNumYYYYMMDD(left->right_date);
             unsigned right_left_date = date_lut.toNumYYYYMMDD(right->left_date);
-            LOG_INFO(log, "begin date:"<<left_left_date << ",end date:" << right_left_date);
+            unsigned right_right_date = date_lut.toNumYYYYMMDD(right->right_date);
+
+            time_t now = time(nullptr);
+            double_t days_between_right_datatime_to_now = difftime(now, date_lut.YYYYMMDDToDate(right_left_date))/(60*60*24);
+            double_t days_between_left_datatime_to_now = difftime(now, date_lut.YYYYMMDDToDate(left_left_date))/(60*60*24);
+            size_t max_days_to_store_daily_partition = context.getMergeTreeSettings().max_days_to_store_daily_partition;
+
+            if (max_days_to_store_daily_partition >= (UInt32) days_between_left_datatime_to_now || max_days_to_store_daily_partition >= days_between_right_datatime_to_now){
+                if (left_left_date != right_left_date){
+                    LOG_DEBUG(log, "Request Merge right_dataPart["<<right_left_date << "," << right_right_date << "] to left_dataPart[" << left_left_date << "," << left_right_date <<"],daily_partition:true");
+                    return false;
+                }
+            }
             return !currently_merging.count(left) && !currently_merging.count(right);
         };
 
@@ -419,7 +432,7 @@ void StorageMergeTree::dropColumnFromPartition(ASTPtr query, const Field & parti
     /// Waits for completion of merge and does not start new ones.
     auto lock = lockForAlter();
 
-    DayNum_t month = MergeTreeData::getMonthDayNum(partition);
+    DayNum_t month = MergeTreeData::getMonthDayNum(partition, context.getMergeTreeSettings());
     MergeTreeData::DataParts parts = data.getDataParts();
 
     std::vector<MergeTreeData::AlterDataPartTransactionPtr> transactions;
@@ -468,24 +481,60 @@ void StorageMergeTree::dropPartition(ASTPtr query, const Field & partition, bool
     /// Waits for completion of merge and does not start new ones.
     auto lock = lockForAlter();
 
-    DayNum_t month = MergeTreeData::getMonthDayNum(partition);
+    DayNum_t month = MergeTreeData::getMonthDayNum(partition, context.getMergeTreeSettings());
 
     size_t removed_parts = 0;
     MergeTreeData::DataParts parts = data.getDataParts();
 
-    for (const auto & part : parts)
-    {
-        if (part->month != month)
-            continue;
+    String month_name = partition.getType() == Field::Types::UInt64
+                        ? toString(partition.get<UInt64>())
+                        : partition.safeGet<String>();
+    if (month_name.size() == 8){
+        // drop partition for YYYYMMDD
+        MergeTreeData::DataParts dailyParts;
+        dailyParts.clear();
+        const auto & date_lut = DateLUT::instance();
+        unsigned to_drop_part = parse<UInt32>(month_name);
+        for (const auto & part : parts) {
+            if (part->month != month)
+                continue;
+            if (date_lut.toNumYYYYMMDD(part->left_date) == date_lut.toNumYYYYMMDD(part->right_date)){
+                if (to_drop_part == date_lut.toNumYYYYMMDD(part->left_date)){
+                    dailyParts.insert(part);
+                }
+            }else{
+                if (to_drop_part == date_lut.toNumYYYYMMDD(part->left_date) || to_drop_part == date_lut.toNumYYYYMMDD(part->right_date)){
+                    dailyParts.clear();
+                    throw Exception("Logical error: legal partition:"+month_name+",but found part:"+part->name, ErrorCodes::LOGICAL_ERROR);
+                }
+            }
+        }
+        for (const auto & part : dailyParts) {
+            LOG_DEBUG(log, "Removing part " << part->name);
+            ++removed_parts;
 
-        LOG_DEBUG(log, "Removing part " << part->name);
-        ++removed_parts;
+            if (detach)
+                data.renameAndDetachPart(part, "");
+            else
+                data.replaceParts({part}, {}, false);
+        }
+    }else{
+        // drop partition for YYYYMMDD
+        for (const auto & part : parts)
+        {
+            if (part->month != month)
+                continue;
 
-        if (detach)
-            data.renameAndDetachPart(part, "");
-        else
-            data.replaceParts({part}, {}, false);
+            LOG_DEBUG(log, "Removing part " << part->name);
+            ++removed_parts;
+
+            if (detach)
+                data.renameAndDetachPart(part, "");
+            else
+                data.replaceParts({part}, {}, false);
+        }
     }
+
 
     LOG_INFO(log, (detach ? "Detached " : "Removed ") << removed_parts << " parts inside " << applyVisitor(FieldVisitorToString(), partition) << ".");
 }
@@ -501,7 +550,7 @@ void StorageMergeTree::attachPartition(ASTPtr query, const Field & field, bool u
     if (part)
         partition = field.getType() == Field::Types::UInt64 ? toString(field.get<UInt64>()) : field.safeGet<String>();
     else
-        partition = MergeTreeData::getMonthName(field);
+        partition = MergeTreeData::getMonthName(field, context.getMergeTreeSettings());
 
     String source_dir = "detached/";
 

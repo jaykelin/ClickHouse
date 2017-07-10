@@ -387,6 +387,9 @@ private:
     /// Adds actions to `ops` that remove a part from ZooKeeper.
     void removePartFromZooKeeper(const String & part_name, zkutil::Ops & ops);
 
+    /// Adds actions to `ops` that remove a part and block_id from Zookeeper
+    void removePartFromZooKeeper(const MergeTreeData::DataPartPtr & part, zkutil::Ops & ops);
+
     /// Removes a part from ZooKeeper and adds a task to the queue to download it. It is supposed to do this with broken parts.
     void removePartAndEnqueueFetch(const String & part_name);
 
