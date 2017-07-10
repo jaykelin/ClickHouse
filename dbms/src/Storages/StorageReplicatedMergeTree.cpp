@@ -1648,9 +1648,9 @@ namespace
     {
         const auto & date_lut = DateLUT::instance();
         unsigned left_left_date =  date_lut.toNumYYYYMMDD(left->left_date);
-        unsigned left_right_date = date_lut.toNumYYYYMMDD(left->right_date);
+//        unsigned left_right_date = date_lut.toNumYYYYMMDD(left->right_date);
         unsigned right_left_date = date_lut.toNumYYYYMMDD(right->left_date);
-        unsigned right_right_date = date_lut.toNumYYYYMMDD(right->right_date);
+//        unsigned right_right_date = date_lut.toNumYYYYMMDD(right->right_date);
 
         time_t now = time(nullptr);
         double_t days_between_right_datatime_to_now = difftime(now, date_lut.YYYYMMDDToDate(right_left_date))/(60*60*24);
@@ -1659,7 +1659,7 @@ namespace
 
         if (max_days_to_store_daily_partition >= (UInt32) days_between_left_datatime_to_now || max_days_to_store_daily_partition >= days_between_right_datatime_to_now){
             if (left_left_date != right_left_date){
-                LOG_DEBUG(log, "Request Merge right_dataPart["<<right_left_date << "," << right_right_date << "] to left_dataPart[" << left_left_date << "," << left_right_date <<"],daily_partition:true");
+//                LOG_DEBUG(log, "Request Merge right_dataPart["<<right_left_date << "," << right_right_date << "] to left_dataPart[" << left_left_date << "," << left_right_date <<"],daily_partition:true");
                 return false;
             }
         }
@@ -1963,7 +1963,6 @@ void StorageReplicatedMergeTree::removePartFromZooKeeper(const String & part_nam
 }
 
 void StorageReplicatedMergeTree::removePartFromZooKeeper(const MergeTreeData::DataPartPtr &part, zkutil::Ops &ops) {
-    /// TODO how to drop block_id like < String block_id = insert_id.empty() ? "" : insert_id + "__" + toString(block_index); >
     /// Hash from the data.
     SipHash hash;
     part->checksums.summaryDataChecksum(hash);
@@ -1982,15 +1981,14 @@ void StorageReplicatedMergeTree::removePartFromZooKeeper(const MergeTreeData::Da
     /// Deleting from `blocks`.
     if (getZooKeeper()->exists(zookeeper_path + "/blocks/" + block_id))
     {
-        ops.emplace_back(std::make_unique<zkutil::Op::Remove>(zookeeper_path + "/blocks/" + block_id + "/number", -1));
-        ops.emplace_back(std::make_unique<zkutil::Op::Remove>(zookeeper_path + "/blocks/" + block_id + "/checksum", -1));
+//        ops.emplace_back(std::make_unique<zkutil::Op::Remove>(zookeeper_path + "/blocks/" + block_id + "/number", -1));
+//        ops.emplace_back(std::make_unique<zkutil::Op::Remove>(zookeeper_path + "/blocks/" + block_id + "/checksum", -1));
         ops.emplace_back(std::make_unique<zkutil::Op::Remove>(zookeeper_path + "/blocks/" + block_id, -1));
     }
 
+    String part_path = replica_path + "/parts/" + part->name;
     Names children_ = getZooKeeper()->getChildren(part_path);
     NameSet children(children_.begin(), children_.end());
-
-    String part_path = replica_path + "/parts/" + part->name;
 
     if (children.count("checksums"))
         ops.emplace_back(std::make_unique<zkutil::Op::Remove>(part_path + "/checksums", -1));
@@ -2743,7 +2741,7 @@ String StorageReplicatedMergeTree::getFakePartNameCoveringAllPartsInPartition(co
 
     {
         auto zookeeper = getZooKeeper();
-        AbandonableLockInZooKeeper block_number_lock = allocateBlockNumber(month_name, zookeeper);
+        AbandonableLockInZooKeeper block_number_lock = allocateBlockNumber(month_name.size() == 8? month_name.substr(0, 6):month_name, zookeeper);
         right = block_number_lock.getNumber();
         block_number_lock.unlock();
     }
@@ -2764,7 +2762,7 @@ void StorageReplicatedMergeTree::clearColumnInPartition(
 
     /// We don't block merges, so anyone can manage this task (not only leader)
 
-    String month_name = MergeTreeData::getMonthName(partition);
+    String month_name = MergeTreeData::getMonthName(partition, context.getMergeTreeSettings());
     String fake_part_name = getFakePartNameCoveringAllPartsInPartition(month_name);
 
     /// We allocated new block number for this part, so new merges can't merge clearing parts with new ones
@@ -2798,7 +2796,7 @@ void StorageReplicatedMergeTree::dropPartition(const ASTPtr & query, const Field
         return;
     }
 
-    String month_name = MergeTreeData::getMonthName(partition);
+    String month_name = MergeTreeData::getMonthName(partition, context.getMergeTreeSettings());
     String fake_part_name = getFakePartNameCoveringAllPartsInPartition(month_name);
 
     /** Forbid to choose the parts to be deleted for merging.

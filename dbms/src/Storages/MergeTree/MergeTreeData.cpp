@@ -1723,7 +1723,7 @@ static std::pair<String, DayNum_t> getMonthNameAndDayNum(const Field & partition
         // is legal daily store partition
         time_t now = time(nullptr);
         double_t between_days = difftime(now, date_lut.YYYYMMDDToDate(parse<UInt32>(month_name)))/(60*60*24);
-        if (between_days <0 || settings.max_days_to_store_daily_partition < (UInt32) between_days){
+        if (between_days <0 || settings.max_days_to_store_daily_partition <= (UInt32) between_days){
             throw Exception("Invalid partition format: "+month_name+", Exceeded max days of daily partition", ErrorCodes::INVALID_PARTITION_NAME);
         }
     }else if (month_name.size() != 6 || !std::all_of(month_name.begin(), month_name.end(), isdigit)){
