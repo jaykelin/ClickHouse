@@ -99,7 +99,7 @@ void InterpreterSelectQuery::init(BlockInputStreamPtr input, const Names & requi
         }
     }
 
-    if (is_first_select_inside_union_all && hasAsterisk())
+    if (is_first_select_inside_union_all && (hasAsterisk() || hasAggregation(&query)))
     {
         basicInit(input);
 
@@ -123,6 +123,25 @@ void InterpreterSelectQuery::init(BlockInputStreamPtr input, const Names & requi
 
         basicInit(input);
     }
+}
+
+bool InterpreterSelectQuery::hasAggregation(ASTSelectQuery * selectQuery){
+    if(!selectQuery) {
+        return false;
+    }
+    if(selectQuery->group_expression_list || selectQuery->having_expression) {
+        return true;
+    }
+    ASTPtr tail = selectQuery->next_union_all;
+    while(tail) {
+        ASTPtr head = tail;
+        ASTSelectQuery & head_query = static_cast<ASTSelectQuery &>(*head);
+        if(head_query.group_expression_list || head_query.having_expression) {
+            return true;
+        }
+        tail = head_query.next_union_all;
+    }
+    return false;
 }
 
 void InterpreterSelectQuery::basicInit(BlockInputStreamPtr input_)
