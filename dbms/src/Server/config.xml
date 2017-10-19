@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <yandex>
     <logger>
-        <level>trace</level>
+        <level>debug</level>
         <log>/var/log/clickhouse-server/clickhouse-server.log</log>
         <errorlog>/var/log/clickhouse-server/clickhouse-server.err.log</errorlog>
         <size>1000M</size>
@@ -87,7 +87,6 @@
       -->
     <mark_cache_size>5368709120</mark_cache_size>
 
-
     <!-- Path to data directory, with trailing slash. -->
     <path>/var/lib/clickhouse/</path>
 
@@ -138,7 +137,13 @@
 
          See https://clickhouse.yandex/reference_en.html#Data%20replication
       -->
-    <zookeeper incl="zookeeper-servers" optional="true" />
+    <!--<zookeeper incl="zookeeper-servers" optional="true" />-->
+    <zookeeper>
+        <node index="1">
+            <host>10.12.0.22</host>
+            <port>2181</port>
+        </node>
+    </zookeeper>
 
     <!-- Substitutions for parameters of replicated tables.
           Optional. If you don't use replicated tables, you could omit that.

@@ -463,6 +463,9 @@ public:
     /// For ATTACH/DETACH/DROP/RESHARD PARTITION.
     String getPartitionIDFromQuery(const Field & partition, const MergeTreeSettings & settings);
 
+    /// For ATTACH/DETACH/DROP/RESHARD PARTITION.
+    String getPartitionIDFromQuery(const Field & partition);
+
     /// For determining the partition id of inserted blocks.
     String getPartitionIDFromData(const Row & partition);
 

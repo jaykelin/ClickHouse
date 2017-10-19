@@ -1752,7 +1752,7 @@ String MergeTreeData::getPartitionIDFromQuery(const Field & partition, const Mer
             throw Exception("Invalid partition format: "+partition_id+". Partition should consist of 6/8 digits: YYYYMMDD",ErrorCodes::INVALID_PARTITION_NAME);
         }
         // is legal date format ?
-        DayNum_t date = date_lut.YYYYMMDDToDayNum(parse<UInt32>(partition_id.substr(0,6)+"01"));
+//        DayNum_t date = date_lut.YYYYMMDDToDayNum(parse<UInt32>(partition_id.substr(0,6)+"01"));
         unsigned year = parse<UInt32>(partition_id.substr(0,4));
         unsigned month = parse<UInt32>(partition_id.substr(4,2));
         unsigned day = parse<UInt32>(partition_id.substr(6,2));
@@ -1762,15 +1762,27 @@ String MergeTreeData::getPartitionIDFromQuery(const Field & partition, const Mer
         }
         // is legal daily store partition
         time_t now = time(nullptr);
-        double_t between_days = difftime(now, date_lut.YYYYMMDDToDate(parse<UInt32>(month_name)))/(60*60*24);
+        double_t between_days = difftime(now, date_lut.YYYYMMDDToDate(parse<UInt32>(partition_id)))/(60*60*24);
         if (between_days <0 || settings.max_days_to_store_daily_partition <= (UInt32) between_days){
-            throw Exception("Invalid partition format: "+month_name+", Exceeded max days of daily partition", ErrorCodes::INVALID_PARTITION_NAME);
+            throw Exception("Invalid partition format: "+partition_id+", Exceeded max days of daily partition", ErrorCodes::INVALID_PARTITION_NAME);
         }
         return partition_id.substr(0,6);
     } else if (partition_id.size() != 6 || !std::all_of(partition_id.begin(), partition_id.end(), isNumericASCII))
         throw Exception("Invalid partition format: " + partition_id + ". Partition should consist of 6 digits: YYYYMM",
                         ErrorCodes::INVALID_PARTITION_NAME);
 
+    return partition_id;
+}
+
+String MergeTreeData::getPartitionIDFromQuery(const Field & partition)
+{
+    /// Month-partitioning specific, TODO: generalize.
+    String partition_id = partition.getType() == Field::Types::UInt64
+                          ? toString(partition.get<UInt64>())
+                          : partition.safeGet<String>();
+    if (partition_id.size() != 6 || !std::all_of(partition_id.begin(), partition_id.end(), isNumericASCII))
+        throw Exception("Invalid partition format: " + partition_id + ". Partition should consist of 6 digits: YYYYMM",
+                        ErrorCodes::INVALID_PARTITION_NAME);
     return partition_id;
 }
 

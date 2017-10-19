@@ -308,10 +308,10 @@ bool StorageMergeTree::merge(
         auto can_merge = [this] (const MergeTreeData::DataPartPtr & left, const MergeTreeData::DataPartPtr & right)
         {
             const auto & date_lut = DateLUT::instance();
-            unsigned left_left_date =  date_lut.toNumYYYYMMDD(left->info.);
-            unsigned left_right_date = date_lut.toNumYYYYMMDD(left->right_date);
-            unsigned right_left_date = date_lut.toNumYYYYMMDD(right->left_date);
-            unsigned right_right_date = date_lut.toNumYYYYMMDD(right->right_date);
+            unsigned left_left_date =  date_lut.toNumYYYYMMDD(left->getMinDate());
+            unsigned left_right_date = date_lut.toNumYYYYMMDD(left->getMaxDate());
+            unsigned right_left_date = date_lut.toNumYYYYMMDD(right->getMinDate());
+            unsigned right_right_date = date_lut.toNumYYYYMMDD(right->getMaxDate());
 
             time_t now = time(nullptr);
             double_t days_between_right_datatime_to_now = difftime(now, date_lut.YYYYMMDDToDate(right_left_date))/(60*60*24);
@@ -422,7 +422,7 @@ void StorageMergeTree::clearColumnInPartition(const ASTPtr & query, const Field 
     /// We don't change table structure, only data in some parts, parts are locked inside alterDataPart() function
     auto lock_read_structure = lockStructure(false, __PRETTY_FUNCTION__);
 
-    String partition_id = data.getPartitionIDFromQuery(partition);
+    String partition_id = data.getPartitionIDFromQuery(partition, context.getMergeTreeSettings());
     MergeTreeData::DataParts parts = data.getDataParts();
 
     std::vector<MergeTreeData::AlterDataPartTransactionPtr> transactions;
@@ -471,7 +471,7 @@ void StorageMergeTree::dropPartition(const ASTPtr & query, const Field & partiti
     /// Waits for completion of merge and does not start new ones.
     auto lock = lockForAlter(__PRETTY_FUNCTION__);
 
-    String partition_id = data.getPartitionIDFromQuery(partition, settings);
+    String partition_id = data.getPartitionIDFromQuery(partition, context.getMergeTreeSettings());
 
     size_t removed_parts = 0;
     MergeTreeData::DataParts parts = data.getDataParts();
@@ -501,7 +501,7 @@ void StorageMergeTree::attachPartition(const ASTPtr & query, const Field & field
     if (part)
         partition_id = field.getType() == Field::Types::UInt64 ? toString(field.get<UInt64>()) : field.safeGet<String>();
     else
-        partition_id = data.getPartitionIDFromQuery(field);
+        partition_id = data.getPartitionIDFromQuery(field, context.getMergeTreeSettings());
 
     String source_dir = "detached/";
 
