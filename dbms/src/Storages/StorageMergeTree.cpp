@@ -307,6 +307,23 @@ bool StorageMergeTree::merge(
 
         auto can_merge = [this] (const MergeTreeData::DataPartPtr & left, const MergeTreeData::DataPartPtr & right)
         {
+            const auto & date_lut = DateLUT::instance();
+            unsigned left_left_date =  date_lut.toNumYYYYMMDD(left->info.);
+            unsigned left_right_date = date_lut.toNumYYYYMMDD(left->right_date);
+            unsigned right_left_date = date_lut.toNumYYYYMMDD(right->left_date);
+            unsigned right_right_date = date_lut.toNumYYYYMMDD(right->right_date);
+
+            time_t now = time(nullptr);
+            double_t days_between_right_datatime_to_now = difftime(now, date_lut.YYYYMMDDToDate(right_left_date))/(60*60*24);
+            double_t days_between_left_datatime_to_now = difftime(now, date_lut.YYYYMMDDToDate(left_left_date))/(60*60*24);
+            size_t max_days_to_store_daily_partition = context.getMergeTreeSettings().max_days_to_store_daily_partition;
+
+            if (max_days_to_store_daily_partition >= (UInt32) days_between_left_datatime_to_now || max_days_to_store_daily_partition >= days_between_right_datatime_to_now){
+                if (left_left_date != right_left_date){
+                    LOG_DEBUG(log, "Request Merge right_dataPart["<<right_left_date << "," << right_right_date << "] to left_dataPart[" << left_left_date << "," << left_right_date <<"],daily_partition:true");
+                    return false;
+                }
+            }
             return !currently_merging.count(left) && !currently_merging.count(right);
         };
 
@@ -454,7 +471,7 @@ void StorageMergeTree::dropPartition(const ASTPtr & query, const Field & partiti
     /// Waits for completion of merge and does not start new ones.
     auto lock = lockForAlter(__PRETTY_FUNCTION__);
 
-    String partition_id = data.getPartitionIDFromQuery(partition);
+    String partition_id = data.getPartitionIDFromQuery(partition, settings);
 
     size_t removed_parts = 0;
     MergeTreeData::DataParts parts = data.getDataParts();

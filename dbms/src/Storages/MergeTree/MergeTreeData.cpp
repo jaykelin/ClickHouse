@@ -1737,16 +1737,39 @@ size_t MergeTreeData::getPartitionSize(const std::string & partition_id) const
     return size;
 }
 
-String MergeTreeData::getPartitionIDFromQuery(const Field & partition)
+String MergeTreeData::getPartitionIDFromQuery(const Field & partition, const MergeTreeSettings & settings)
 {
     /// Month-partitioning specific, TODO: generalize.
     String partition_id = partition.getType() == Field::Types::UInt64
         ? toString(partition.get<UInt64>())
         : partition.safeGet<String>();
 
-    if (partition_id.size() != 6 || !std::all_of(partition_id.begin(), partition_id.end(), isNumericASCII))
+    const auto & date_lut = DateLUT::instance();
+
+    // is daily store partition ?
+    if (partition_id.size() == 8){
+        if (!std::all_of(partition_id.begin(), partition_id.end(), isdigit)){
+            throw Exception("Invalid partition format: "+partition_id+". Partition should consist of 6/8 digits: YYYYMMDD",ErrorCodes::INVALID_PARTITION_NAME);
+        }
+        // is legal date format ?
+        DayNum_t date = date_lut.YYYYMMDDToDayNum(parse<UInt32>(partition_id.substr(0,6)+"01"));
+        unsigned year = parse<UInt32>(partition_id.substr(0,4));
+        unsigned month = parse<UInt32>(partition_id.substr(4,2));
+        unsigned day = parse<UInt32>(partition_id.substr(6,2));
+        DayNum_t partDay = date_lut.YYYYMMDDToDayNum(parse<UInt32>(partition_id));
+        if (year != date_lut.toYear(partDay) || month != date_lut.toMonth(partDay) || day != date_lut.toDayOfMonth(partDay)){
+            throw Exception("Invalid partition format:"+partition_id+", doesn't look like YYYYMMDD", ErrorCodes::INVALID_PARTITION_NAME);
+        }
+        // is legal daily store partition
+        time_t now = time(nullptr);
+        double_t between_days = difftime(now, date_lut.YYYYMMDDToDate(parse<UInt32>(month_name)))/(60*60*24);
+        if (between_days <0 || settings.max_days_to_store_daily_partition <= (UInt32) between_days){
+            throw Exception("Invalid partition format: "+month_name+", Exceeded max days of daily partition", ErrorCodes::INVALID_PARTITION_NAME);
+        }
+        return partition_id.substr(0,6);
+    } else if (partition_id.size() != 6 || !std::all_of(partition_id.begin(), partition_id.end(), isNumericASCII))
         throw Exception("Invalid partition format: " + partition_id + ". Partition should consist of 6 digits: YYYYMM",
-            ErrorCodes::INVALID_PARTITION_NAME);
+                        ErrorCodes::INVALID_PARTITION_NAME);
 
     return partition_id;
 }
